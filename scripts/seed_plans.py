@@ -18,7 +18,7 @@ PLANS = [
         name="Pro",
         api_call_limit=50_000,
         ai_token_limit=5_000_000,
-        stripe_price_id="price_placeholder_pro",  # replace once you create it in Stripe test mode
+        stripe_price_id="price_1U6kcgPP7vSIrVf22oBZNWX3",  # replace once you create it in Stripe test mode
     ),
 ]
 
