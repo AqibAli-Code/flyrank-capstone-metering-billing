@@ -1,0 +1,72 @@
+# capstone.yaml
+# Machine-readable manifest read by the evaluator before any human review.
+
+name: flyrank-capstone-metering-billing
+track: Backend
+capstone: Usage Metering & Billing Engine
+
+# One command that boots the entire system from a clean checkout.
+# Assumes Docker Desktop is running and a `venv` has been created + activated
+# with `pip install -r requirements.txt` already run (see README setup steps 1-4).
+run: >
+  docker compose up -d &&
+  python -m scripts.init_db &&
+  uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+# Populates the two required plans (Free/Pro) and a baseline test tenant.
+# Run after `run:` has started Postgres, before hitting any endpoint.
+seed: >
+  python -m scripts.seed_plans &&
+  python -m scripts.seed_tenant
+
+# Full automated test suite — pinned pricing math, idempotency, webhook security.
+test: pytest -v
+
+base_url: http://localhost:8000
+
+# Endpoints exercised by the five acceptance probes (§12, Layer 2 of the brief).
+endpoints:
+  - method: POST
+    path: /generate
+    description: >
+      Billable action. Requires X-Tenant-Id and Idempotency-Key headers.
+      Probe 1 (idempotent metering) and Probe 2 (quota boundary) both target
+      this endpoint.
+    headers_required:
+      - X-Tenant-Id
+      - Idempotency-Key
+
+  - method: GET
+    path: /usage
+    description: >
+      Current-period usage, quota limit, and pricing-engine cost for the
+      calling tenant. Requires X-Tenant-Id.
+    headers_required:
+      - X-Tenant-Id
+
+  - method: POST
+    path: /checkout/pro
+    description: >
+      Creates a Stripe Checkout session (test mode) for the Pro plan.
+      First half of Probe 3 — completing the returned checkout_url with
+      Stripe's test card triggers the webhook that finishes Probe 3.
+    headers_required:
+      - X-Tenant-Id
+
+  - method: POST
+    path: /webhooks/stripe
+    description: >
+      Stripe webhook receiver. Verifies the stripe-signature header,
+      deduplicates on Stripe's event.id, and updates tenant plan/status.
+      Probe 3 (Free -> Pro sync), Probe 4 (forged signature -> 400,
+      duplicate event -> ignored).
+
+  - method: GET
+    path: /health
+    description: Liveness check, not tied to a specific probe.
+
+# Env vars the evaluator must supply (see .env.example for placeholders).
+required_env:
+  - DATABASE_URL
+  - STRIPE_SECRET_KEY
+  - STRIPE_WEBHOOK_SECRET
