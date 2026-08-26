@@ -2,18 +2,29 @@
 
 Backend service for FlyRank's capstone brief: idempotent usage metering, quota enforcement, AI-token cost calculation, and Stripe subscription billing.
 
+## 🎥 Video Demonstration
+
+Watch the complete end-to-end capstone demo (FastAPI generation, Stripe checkout, webhook verification, and usage tracking):
+👉 [Watch Video Proof on Google Drive](https://drive.google.com/file/d/1Icu2CSApQmuUPLQNTqUHp_Nu6zwoVO9R/view?usp=sharing)
+
+
 ## Architecture
+
+```
 Client ─► POST /generate
-└─► MeterService.record(tenant, type, qty, idempotency_key)
-├─ duplicate key? → return original result, no new event
-├─ store usage_event
-└─► Quota Check ─► allowed (200) or limit exceeded (402 / 429)
+  └─► MeterService.record(tenant, type, qty, idempotency_key)
+      ├─ duplicate key? → return original result, no new event
+      ├─ store usage_event
+      └─► Quota Check ─► allowed (200) or limit exceeded (402 / 429)
+
 GET /usage ◄── rollup(usage_events) → { used, limit, cost }
+
 Stripe Checkout (test mode) ─► subscription created
 Stripe ─signed webhook─► POST /webhooks/stripe
-├─► verify signature (forged → 400)
-├─► deduplicate event (replay → ignored)
-└─► update tenant plan / status
+  ├─► verify signature (forged → 400)
+  ├─► deduplicate event (replay → ignored)
+  └─► update tenant plan / status
+```
 
 
 ## Setup (from a clean machine)
