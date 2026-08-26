@@ -21,9 +21,10 @@ GET /usage ◄── rollup(usage_events) → { used, limit, cost }
 
 Stripe Checkout (test mode) ─► subscription created
 Stripe ─signed webhook─► POST /webhooks/stripe
-  ├─► verify signature (forged → 400)
-  ├─► deduplicate event (replay → ignored)
-  └─► update tenant plan / status
+├─► verify signature (forged → 400)
+├─► deduplicate event (replay → ignored)
+├─► update tenant plan / status
+└─► schedule background task: write audit_logs row (off the request path)
 ```
 
 
@@ -43,7 +44,7 @@ Stripe ─signed webhook─► POST /webhooks/stripe
 python -m pytest -v
 
 
-8 tests: 6 pinned pricing-math tests, 1 forged-webhook rejection test, 1 idempotent-metering test.
+12 tests: 6 pinned pricing-math tests, 1 idempotent-metering test, 3 quota-boundary tests (well-under, at-limit, over-limit), 1 forged-webhook rejection test, 1 duplicate-webhook-event test.
 
 ## Endpoints
 
@@ -62,6 +63,7 @@ python -m pytest -v
 - **Money**: stored and computed as integer micro-cents throughout; converted to display currency only at the API edge.
 - **AI-token pricing**: cached input tokens are billed cheaper than fresh input; reasoning tokens bill at the output-token rate, not as a separate category. See `app/pricing/config.py` and its pinned tests.
 - **Webhook safety**: two independent layers — Stripe signature verification (forged events → `400`) and a `processed_webhook_events` table keyed on Stripe's own `event.id` (replayed legitimate events → ignored, not reprocessed).
+- **Background audit logging**: after a webhook is verified and processed (or recognized as a duplicate), the response is returned to Stripe immediately, and a separate audit-log write happens afterward via FastAPI's `BackgroundTasks` — using its own database session, so it never adds latency to Stripe's webhook response. Retries on transient failure with backoff; logs a clear error if all retries are exhausted, since the response has already been sent by that point.
 
 ## Known limitations (explicit non-goals for this capstone's scope)
 

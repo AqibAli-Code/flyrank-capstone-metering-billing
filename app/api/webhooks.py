@@ -1,7 +1,7 @@
 import os
 import stripe
 from datetime import datetime, timezone
-from fastapi import APIRouter, Request, HTTPException, Depends
+from fastapi import APIRouter, Request, HTTPException, Depends, BackgroundTasks
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.dependencies import get_db
@@ -11,6 +11,7 @@ from app.services.stripe_service import (
     get_subscription_by_stripe_id,
     get_or_create_subscription,
 )
+from app.services.audit import log_webhook_processed
 
 router = APIRouter(prefix="/webhooks", tags=["Webhooks"])
 stripe.api_key = os.environ["STRIPE_SECRET_KEY"]
@@ -18,7 +19,11 @@ WEBHOOK_SECRET = os.environ["STRIPE_WEBHOOK_SECRET"]
 
 
 @router.post("/stripe")
-async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
+async def stripe_webhook(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
     payload = await request.body()
     sig_header = request.headers.get("stripe-signature")
 
@@ -36,11 +41,14 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
         await db.flush()
     except IntegrityError:
         await db.rollback()
+        background_tasks.add_task(log_webhook_processed, event["id"], event["type"], "duplicate_ignored")
         return {"status": "duplicate_ignored"}
 
     await handle_event(db, event)
     await db.commit()
+    background_tasks.add_task(log_webhook_processed, event["id"], event["type"], "processed")
     return {"status": "processed"}
+
 
 async def handle_event(db: AsyncSession, event: dict):
     event_type = event["type"]
@@ -87,6 +95,7 @@ async def sync_subscription_from_stripe(db: AsyncSession, stripe_sub_data: dict)
     sub.current_period_end = datetime.fromtimestamp(period_item["current_period_end"], tz=timezone.utc)
     await db.flush()
 
+
 async def downgrade_to_free(db: AsyncSession, stripe_subscription_id: str):
     sub = await get_subscription_by_stripe_id(db, stripe_subscription_id)
     if sub is None:
@@ -94,4 +103,3 @@ async def downgrade_to_free(db: AsyncSession, stripe_subscription_id: str):
     sub.plan_id = "free"
     sub.status = "canceled"
     await db.flush()
-
